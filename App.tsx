@@ -379,11 +379,11 @@ const App: React.FC = () => {
           </>
         )}
       </main>
-      {!isStoreClosed && cartItems.length > 0 && (
-        <div className="fixed bottom-8 left-0 right-0 flex justify-center px-6 z-40">
+      {!isStoreClosed && <div className="fixed bottom-8 left-0 right-0 flex justify-center px-6 z-40">
+        {cartItems.length > 0 && (
           <button onClick={() => { setIsCartOpen(true); handleUnlockAudio(); }} className="w-full max-w-md bg-blue-950 text-yellow-400 rounded-[2.5rem] p-5 flex items-center justify-between shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] ring-4 ring-yellow-400/30 font-black scale-100 hover:scale-105 transition-all"><span className="text-xs uppercase">Sacola ({cartItems.reduce((a,b)=>a+b.quantity,0)})</span><span className="text-white text-lg italic">R$ {cartItems.reduce((a,b)=>a+(b.price*b.quantity),0).toFixed(2)}</span></button>
-        </div>
-      )}
+        )}
+      </div>}
       <Cart isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} items={cartItems} onUpdateQuantity={(id, d) => setCartItems(p => p.map(i => i.id === id ? {...i, quantity: Math.max(1, i.quantity + d)} : i))} onRemove={id => setCartItems(p => p.filter(i => i.id !== id))} onAdd={() => {}} onPlaceOrder={handlePlaceOrder} storeConfig={storeConfig} />
     </div>
   );

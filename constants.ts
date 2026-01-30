@@ -2,7 +2,7 @@
 import { Product, StoreInfo, Table } from './types';
 
 export const STORE_INFO: StoreInfo = {
-  name: 'JG Conveniência',
+  name: 'G & C Conveniência',
   slogan: 'Praticidade e Qualidade ⛽',
   hours: 'Funcionamento 24h | Todos os dias',
   whatsapp: '558591076984'

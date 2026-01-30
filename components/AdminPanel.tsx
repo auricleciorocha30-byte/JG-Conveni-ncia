@@ -135,7 +135,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `backup-jg-convenient-${new Date().getTime()}.json`;
+    link.download = `backup-gc-conveniencia-${new Date().getTime()}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
