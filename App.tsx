@@ -9,8 +9,6 @@ import { Product, CartItem, Table, Order, Category, Coupon, StoreConfig, DailySp
 import { supabase } from './lib/supabase';
 import { CloseIcon, GasIcon, StarIcon } from './components/Icons';
 
-const DAYS_NAMES = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
-
 const App: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -239,22 +237,6 @@ const App: React.FC = () => {
     return menuItems.find(p => p.id === config.product_id && p.isAvailable) || null;
   }, [dailySpecials, menuItems]);
 
-  const weeklySchedule = useMemo(() => {
-    // Retorna apenas os dias que possuem produto agendado
-    return dailySpecials
-      .filter(s => s.product_id !== null)
-      .map(s => {
-        const product = menuItems.find(p => p.id === s.product_id);
-        return { day: s.day_of_week, product };
-      })
-      .filter(item => item.product !== undefined)
-      .sort((a, b) => {
-        // Ordena começando por segunda (1) até domingo (0)
-        const order = [1, 2, 3, 4, 5, 6, 0];
-        return order.indexOf(a.day) - order.indexOf(b.day);
-      });
-  }, [dailySpecials, menuItems]);
-
   const activeStatusOrders = useMemo(() => tables.filter(t => t.status === 'occupied' && t.currentOrder && t.currentOrder.status !== 'delivered' && (t.id <= 12 || t.id >= 950)).map(t => t.currentOrder!).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()), [tables]);
   const statusLabel = (s: string) => ({ pending: 'Pendente', preparing: 'Preparando', ready: 'PRONTO! 🚀' }[s] || s);
 
@@ -289,7 +271,84 @@ const App: React.FC = () => {
     );
   }
 
-  // ... (TV view remains same) ...
+  if (currentView === 'tv') {
+     const preparingOrders = activeStatusOrders.filter(o => o.status === 'pending' || o.status === 'preparing');
+     const readyOrders = activeStatusOrders.filter(o => o.status === 'ready');
+     return (
+       <div className="fixed inset-0 bg-yellow-400 text-blue-950 flex flex-col font-black overflow-hidden select-none" onClick={handleUnlockAudio}>
+         <div className="h-24 bg-blue-950 text-yellow-400 flex items-center justify-between px-10 shadow-2xl border-b-8 border-blue-800">
+            <div className="flex items-center gap-6">
+               <div className="bg-yellow-400 p-3 rounded-2xl shadow-xl"><GasIcon size={32} className="text-blue-950" /></div>
+               <h1 className="text-4xl italic uppercase tracking-tighter">SITUAÇÃO DO PEDIDO</h1>
+            </div>
+            <div className="flex items-center gap-8">
+               <div className="text-right"><p className="text-[10px] uppercase tracking-widest opacity-60">Status ao Vivo</p><h2 className="text-2xl italic leading-none">{STORE_INFO.name.toUpperCase()}</h2></div>
+               <button onClick={() => { setCurrentView('login'); window.history.pushState({}, '', window.location.pathname); }} className="bg-yellow-400 text-blue-950 px-6 py-3 rounded-2xl text-sm font-black uppercase border-2 border-blue-950/20 hover:bg-red-600 hover:text-white">Sair</button>
+            </div>
+         </div>
+         <div className="flex-1 flex gap-2 p-4">
+            <div className="flex-1 bg-white/40 rounded-[3rem] p-8 border-4 border-white/20 flex flex-col overflow-hidden">
+               <div className="flex items-center justify-between mb-8 border-b-4 border-blue-950/10 pb-4"><h3 className="text-3xl uppercase italic text-blue-950">🕒 PREPARANDO...</h3><span className="bg-blue-950 text-yellow-400 px-4 py-1 rounded-full text-xl">{preparingOrders.length}</span></div>
+               <div className="flex-1 grid grid-cols-1 gap-4 overflow-y-auto no-scrollbar">
+                  {preparingOrders.map(o => (<div key={o.id} className="bg-white border-l-[1rem] border-blue-950 p-6 rounded-3xl flex items-center justify-between shadow-lg"><div className="min-w-0 flex-1"><p className="text-5xl uppercase truncate leading-tight text-blue-950">{o.customerName}</p><p className="text-xl text-blue-900 opacity-60">#{o.id} • {o.tableId >= 950 ? 'BALCÃO' : `MESA ${o.tableId}`}</p></div></div>))}
+               </div>
+            </div>
+            <div className="flex-1 bg-green-900/10 rounded-[3rem] p-8 border-4 border-green-500/30 flex flex-col overflow-hidden">
+               <div className="flex items-center justify-between mb-8 border-b-4 border-green-500 pb-4"><h3 className="text-3xl uppercase italic text-green-700">🚀 PRONTO</h3><span className="bg-green-600 text-white px-4 py-1 rounded-full text-xl">{readyOrders.length}</span></div>
+               <div className="flex-1 grid grid-cols-1 gap-4 overflow-y-auto no-scrollbar">
+                  {readyOrders.map(o => (<div key={o.id} className="bg-green-600 p-8 rounded-3xl flex items-center justify-between animate-[pulse_2s_infinite] shadow-2xl"><div className="min-w-0 flex-1"><p className="text-6xl uppercase truncate leading-tight text-white">{o.customerName}</p><p className="text-2xl text-white/80">CÓDIGO: <span className="text-green-900 bg-white px-3 rounded-lg">#{o.id}</span></p></div></div>))}
+               </div>
+            </div>
+         </div>
+       </div>
+     );
+  }
+
+  if (currentView === 'admin' && isAdmin) {
+    return (
+      <div className="min-h-screen bg-yellow-50 p-6">
+        {activeAlert && (
+          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-md px-6 animate-in slide-in-from-top duration-700">
+            <div className={`${activeAlert.isUpdate ? 'bg-blue-600' : 'bg-blue-950 border-yellow-400'} text-white p-5 rounded-[2.5rem] shadow-2xl border-4 flex items-center gap-5`}>
+              <div className="bg-yellow-400 text-blue-950 w-12 h-12 rounded-xl flex items-center justify-center font-black shrink-0 shadow-lg">{activeAlert.isUpdate ? '🔄' : '🔔'}</div>
+              <div className="flex-1 font-black text-white">
+                <h4 className="text-[10px] uppercase text-yellow-400 tracking-widest mb-0.5">{activeAlert.msg}</h4>
+                <p className="text-lg italic uppercase tracking-tighter leading-none">{activeAlert.type} #{activeAlert.id}</p>
+              </div>
+              <button onClick={() => setActiveAlert(null)} className="p-2 bg-white/10 rounded-full"><CloseIcon size={18}/></button>
+            </div>
+          </div>
+        )}
+        <AdminPanel 
+          tables={tables} menuItems={menuItems} categories={categories} audioEnabled={audioEnabled} onToggleAudio={() => setAudioEnabled(!audioEnabled)} onTestSound={testSound}
+          onUpdateTable={async (id, status, ord) => { 
+            try {
+              if (status === 'free') await supabase.from('tables').delete().eq('id', id);
+              else await supabase.from('tables').upsert({ id, status, current_order: ord || null }, { onConflict: 'id' });
+            } catch (e) { console.error("Table update error", e); }
+          }}
+          onAddToOrder={(tableId, product, observation) => {
+            const table = tables.find(t => t.id === tableId);
+            let current = table?.currentOrder;
+            const items = current ? [...(current.items || [])] : [];
+            const ex = items.findIndex(i => i.id === product.id && (i.observation || '') === (observation || ''));
+            if (ex >= 0) items[ex].quantity += 1;
+            else items.push({ ...product, quantity: 1, observation });
+            const total = items.reduce((a, b) => a + (b.price * b.quantity), 0);
+            handlePlaceOrder(current ? { ...current, items, total, finalTotal: total - (current.discount || 0) } : { id: Math.random().toString(36).substr(2, 6).toUpperCase(), customerName: tableId >= 950 ? 'Balcão' : tableId >= 900 ? 'Entrega' : `Mesa ${tableId}`, items, total, finalTotal: total, paymentMethod: 'Pendente', timestamp: new Date().toISOString(), tableId, status: 'pending', orderType: tableId >= 950 ? 'counter' : tableId >= 900 ? 'delivery' : 'table' });
+          }}
+          onRefreshData={() => fetchData()} onLogout={async () => { await supabase.auth.signOut(); setIsLoggedIn(false); setIsAdmin(false); setCurrentView('login'); }}
+          onSaveProduct={async (p) => { try { const data = { id: p.id || 'p_' + Date.now(), name: p.name, price: p.price, category: p.category, description: p.description, image: p.image, is_available: p.isAvailable }; await supabase.from('products').upsert([data], { onConflict: 'id' }); fetchData(true); } catch (e) { console.error("Save product error", e); } }}
+          onDeleteProduct={async (id) => { try { await supabase.from('products').delete().eq('id', id); fetchData(true); } catch (e) { console.error("Delete product error", e); } }} dbStatus={dbStatus === 'loading' ? 'loading' : 'ok'}
+          storeConfig={storeConfig}
+          onUpdateStoreConfig={async (newCfg) => {
+            setStoreConfig(newCfg);
+            try { await supabase.from('store_config').upsert({ id: 1, tables_enabled: newCfg.tablesEnabled, delivery_enabled: newCfg.deliveryEnabled, counter_enabled: newCfg.counterEnabled, status_panel_enabled: newCfg.statusPanelEnabled }, { onConflict: 'id' }); } catch (e) { console.error("Config update error", e); }
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-yellow-50 flex flex-col font-sans relative" onClick={handleUnlockAudio}>
@@ -297,7 +356,6 @@ const App: React.FC = () => {
       <main className="w-full max-w-6xl mx-auto px-4 sm:px-6 -mt-8 relative z-20 flex-1 pb-40">
         {!isStoreClosed && (
           <>
-            {/* Destaque de Hoje */}
             {todaySpecialItem && (
                <div className="bg-white p-1 rounded-[3rem] shadow-2xl border-4 border-yellow-400 mb-12 overflow-hidden group">
                   <div className="flex flex-col md:flex-row items-center">
@@ -331,30 +389,6 @@ const App: React.FC = () => {
                </div>
             )}
 
-            {/* Cronograma da Semana (Opcional - Visível se houver agendamento) */}
-            {weeklySchedule.length > 0 && (
-              <div className="mb-12 bg-blue-950 rounded-[3rem] p-8 shadow-2xl border-b-8 border-yellow-400">
-                 <div className="flex items-center gap-4 mb-8">
-                    <div className="bg-yellow-400 p-2 rounded-xl rotate-6"><StarIcon size={20} className="text-blue-950" /></div>
-                    <h3 className="text-xl font-black italic uppercase text-yellow-400 tracking-tighter">Cronograma de Ofertas</h3>
-                 </div>
-                 <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2">
-                   {weeklySchedule.map(item => {
-                     const isToday = new Date().getDay() === item.day;
-                     return (
-                       <div key={item.day} className={`shrink-0 w-44 p-5 rounded-3xl border-2 transition-all ${isToday ? 'bg-yellow-400 border-white scale-105 shadow-xl' : 'bg-blue-900/40 border-blue-800'}`}>
-                          <p className={`text-[10px] font-black uppercase mb-3 ${isToday ? 'text-blue-950' : 'text-yellow-400/60'}`}>{DAYS_NAMES[item.day]}</p>
-                          <img src={item.product?.image} className="w-full aspect-video rounded-xl object-cover mb-3 shadow-md" />
-                          <p className={`font-black text-[10px] uppercase truncate ${isToday ? 'text-blue-950' : 'text-white'}`}>{item.product?.name}</p>
-                          <p className={`text-[11px] font-black italic mt-1 ${isToday ? 'text-blue-950/70' : 'text-yellow-400'}`}>R$ {item.product?.price.toFixed(2)}</p>
-                       </div>
-                     );
-                   })}
-                 </div>
-              </div>
-            )}
-
-            {/* ... (Existing Status Panel and Category Filters) ... */}
             {storeConfig.statusPanelEnabled && activeStatusOrders.length > 0 && showCustomerStatusPanel && (
               <div className="bg-blue-950 text-white p-6 rounded-[2.5rem] mb-10 shadow-2xl border-4 border-yellow-400 overflow-hidden relative">
                 <button onClick={() => setShowCustomerStatusPanel(false)} className="absolute top-4 right-4 z-10 p-2 bg-white/10 rounded-full"><CloseIcon size={16} className="text-yellow-400" /></button>
@@ -369,11 +403,9 @@ const App: React.FC = () => {
                 </div>
               </div>
             )}
-
             <div className="flex overflow-x-auto gap-2.5 pb-8 no-scrollbar mask-fade pt-4">
               {categoryNames.map(cat => (<button key={cat} onClick={() => setSelectedCategory(cat)} className={`whitespace-nowrap px-6 py-3.5 rounded-2xl font-black text-[10px] uppercase shadow-md transition-all ${selectedCategory === cat ? 'bg-blue-950 text-yellow-400' : 'bg-white text-blue-950 border border-yellow-200 hover:border-blue-950'}`}>{cat}</button>))}
             </div>
-            
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {filteredItems.map(item => <MenuItem key={item.id} product={item} activeCoupons={activeCoupons} onAdd={(p) => setCartItems(prev => { const ex = prev.find(i => i.id === p.id); if (ex) return prev.map(i => i.id === p.id ? {...i, quantity: i.quantity + 1} : i); return [...prev, { ...p, quantity: 1 }]; })} />)}
             </div>
@@ -394,13 +426,11 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
-      
       {!isStoreClosed && <div className="fixed bottom-8 left-0 right-0 flex justify-center px-6 z-40">
         {cartItems.length > 0 && (
           <button onClick={() => { setIsCartOpen(true); handleUnlockAudio(); }} className="w-full max-w-md bg-blue-950 text-yellow-400 rounded-[2.5rem] p-5 flex items-center justify-between shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] ring-4 ring-yellow-400/30 font-black scale-100 hover:scale-105 transition-all"><span className="text-xs uppercase">Sacola ({cartItems.reduce((a,b)=>a+b.quantity,0)})</span><span className="text-white text-lg italic">R$ {cartItems.reduce((a,b)=>a+(b.price*b.quantity),0).toFixed(2)}</span></button>
         )}
       </div>}
-      
       <Cart isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} items={cartItems} onUpdateQuantity={(id, d) => setCartItems(p => p.map(i => i.id === id ? {...i, quantity: Math.max(1, i.quantity + d)} : i))} onRemove={id => setCartItems(p => p.filter(i => i.id !== id))} onAdd={() => {}} onPlaceOrder={handlePlaceOrder} storeConfig={storeConfig} />
     </div>
   );
