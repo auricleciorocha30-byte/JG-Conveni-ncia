@@ -5,9 +5,9 @@ import MenuItem from './components/MenuItem';
 import Cart from './components/Cart';
 import AdminPanel from './components/AdminPanel';
 import { MENU_ITEMS as STATIC_MENU, INITIAL_TABLES, STORE_INFO } from './constants';
-import { Product, CartItem, Table, Order, Category, Coupon, StoreConfig } from './types';
+import { Product, CartItem, Table, Order, Category, Coupon, StoreConfig, DailySpecial } from './types';
 import { supabase } from './lib/supabase';
-import { CloseIcon, GasIcon } from './components/Icons';
+import { CloseIcon, GasIcon, StarIcon } from './components/Icons';
 
 const App: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState(false);
@@ -24,6 +24,7 @@ const App: React.FC = () => {
   const [menuItems, setMenuItems] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [activeCoupons, setActiveCoupons] = useState<Coupon[]>([]);
+  const [dailySpecials, setDailySpecials] = useState<DailySpecial[]>([]);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [dbStatus, setDbStatus] = useState<'loading' | 'ok' | 'error' | 'syncing'>('loading');
@@ -79,12 +80,13 @@ const App: React.FC = () => {
     try {
       if (!isSilent) setDbStatus('loading');
       
-      const [catRes, coupRes, prodRes, tableRes, configRes] = await Promise.all([
+      const [catRes, coupRes, prodRes, tableRes, configRes, specialRes] = await Promise.all([
         supabase.from('categories').select('*').order('name'),
         supabase.from('coupons').select('*').eq('is_active', true),
         supabase.from('products').select('*').order('name'),
         supabase.from('tables').select('*').order('id'),
-        supabase.from('store_config').select('*').maybeSingle()
+        supabase.from('store_config').select('*').maybeSingle(),
+        supabase.from('daily_specials').select('*')
       ]);
 
       if (configRes.data) {
@@ -96,6 +98,7 @@ const App: React.FC = () => {
         });
       }
 
+      if (specialRes.data) setDailySpecials(specialRes.data);
       if (catRes.data) setCategories(catRes.data);
       if (coupRes.data) setActiveCoupons(coupRes.data.map((c: any) => ({ id: c.id, code: c.code, percentage: c.percentage, isActive: c.is_active, scopeType: c.scope_type, scopeValue: c.scope_value })));
       
@@ -195,6 +198,7 @@ const App: React.FC = () => {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchData(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_specials' }, () => fetchData(true))
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [audioEnabled, fetchData, isAdmin, currentView]);
@@ -225,6 +229,14 @@ const App: React.FC = () => {
   const isStoreClosed = !storeConfig.tablesEnabled && !storeConfig.deliveryEnabled && !storeConfig.counterEnabled;
   const categoryNames = useMemo(() => ['Todos', ...(categories || []).map(c => c.name)], [categories]);
   const filteredItems = useMemo(() => (menuItems || []).filter(i => selectedCategory === 'Todos' || i.category === selectedCategory), [menuItems, selectedCategory]);
+  
+  const todaySpecialItem = useMemo(() => {
+    const today = new Date().getDay(); // 0-6
+    const config = dailySpecials.find(s => s.day_of_week === today);
+    if (!config || !config.product_id) return null;
+    return menuItems.find(p => p.id === config.product_id && p.isAvailable) || null;
+  }, [dailySpecials, menuItems]);
+
   const activeStatusOrders = useMemo(() => tables.filter(t => t.status === 'occupied' && t.currentOrder && t.currentOrder.status !== 'delivered' && (t.id <= 12 || t.id >= 950)).map(t => t.currentOrder!).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()), [tables]);
   const statusLabel = (s: string) => ({ pending: 'Pendente', preparing: 'Preparando', ready: 'PRONTO! 🚀' }[s] || s);
 
@@ -342,20 +354,41 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-yellow-50 flex flex-col font-sans relative" onClick={handleUnlockAudio}>
       <HeaderComp />
       <main className="w-full max-w-6xl mx-auto px-4 sm:px-6 -mt-8 relative z-20 flex-1 pb-40">
-        {isStoreClosed ? (
-          <div className="bg-white p-12 rounded-[4rem] text-center shadow-2xl border-t-8 border-blue-950 animate-in fade-in zoom-in duration-500">
-             <div className="bg-red-500 w-24 h-24 rounded-full mx-auto mb-8 flex items-center justify-center shadow-xl animate-pulse">
-                <CloseIcon size={48} className="text-white" />
-             </div>
-             <h2 className="text-4xl font-black italic uppercase tracking-tighter mb-4 text-blue-950">LOJA FECHADA</h2>
-             <p className="text-blue-900/50 uppercase text-xs font-black tracking-widest leading-relaxed max-w-sm mx-auto">No momento não estamos aceitando novos pedidos. Tente mais tarde!</p>
-             <div className="mt-12 bg-yellow-400 p-6 rounded-[2.5rem] border-2 border-yellow-500 shadow-xl">
-                <p className="text-[10px] font-black uppercase text-blue-950/40 mb-2">Funcionamento</p>
-                <p className="font-black text-blue-950 uppercase tracking-tight italic">{STORE_INFO.hours}</p>
-             </div>
-          </div>
-        ) : (
+        {!isStoreClosed && (
           <>
+            {todaySpecialItem && (
+               <div className="bg-white p-1 rounded-[3rem] shadow-2xl border-4 border-yellow-400 mb-12 overflow-hidden group">
+                  <div className="flex flex-col md:flex-row items-center">
+                    <div className="w-full md:w-2/5 aspect-[4/3] md:aspect-square overflow-hidden relative">
+                       <img src={todaySpecialItem.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt="Especial" />
+                       <div className="absolute top-6 left-6 bg-blue-950 text-yellow-400 px-6 py-2 rounded-full font-black uppercase text-[10px] shadow-2xl flex items-center gap-2">
+                          <StarIcon size={16} /> Especial de Hoje
+                       </div>
+                    </div>
+                    <div className="w-full md:w-3/5 p-8 md:p-12">
+                       <h2 className="text-3xl font-black italic uppercase text-blue-950 mb-3 tracking-tighter leading-none">{todaySpecialItem.name}</h2>
+                       <p className="text-blue-900/50 text-sm font-bold uppercase italic mb-8 leading-relaxed line-clamp-2">{todaySpecialItem.description}</p>
+                       <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black uppercase text-blue-900/30 tracking-widest mb-1">Oferta Exclusiva</p>
+                            <p className="text-4xl font-black italic text-blue-950 leading-none">R$ {todaySpecialItem.price.toFixed(2).replace('.', ',')}</p>
+                          </div>
+                          <button 
+                            onClick={() => setCartItems(prev => { 
+                              const ex = prev.find(i => i.id === todaySpecialItem!.id); 
+                              if (ex) return prev.map(i => i.id === todaySpecialItem!.id ? {...i, quantity: i.quantity + 1} : i); 
+                              return [...prev, { ...todaySpecialItem!, quantity: 1 }]; 
+                            })}
+                            className="bg-blue-950 text-yellow-400 px-8 py-4 rounded-2xl font-black uppercase text-[11px] shadow-xl hover:scale-105 active:scale-95 transition-all"
+                          >
+                            Pedir Agora +
+                          </button>
+                       </div>
+                    </div>
+                  </div>
+               </div>
+            )}
+
             {storeConfig.statusPanelEnabled && activeStatusOrders.length > 0 && showCustomerStatusPanel && (
               <div className="bg-blue-950 text-white p-6 rounded-[2.5rem] mb-10 shadow-2xl border-4 border-yellow-400 overflow-hidden relative">
                 <button onClick={() => setShowCustomerStatusPanel(false)} className="absolute top-4 right-4 z-10 p-2 bg-white/10 rounded-full"><CloseIcon size={16} className="text-yellow-400" /></button>
@@ -377,6 +410,20 @@ const App: React.FC = () => {
               {filteredItems.map(item => <MenuItem key={item.id} product={item} activeCoupons={activeCoupons} onAdd={(p) => setCartItems(prev => { const ex = prev.find(i => i.id === p.id); if (ex) return prev.map(i => i.id === p.id ? {...i, quantity: i.quantity + 1} : i); return [...prev, { ...p, quantity: 1 }]; })} />)}
             </div>
           </>
+        )}
+
+        {isStoreClosed && (
+          <div className="bg-white p-12 rounded-[4rem] text-center shadow-2xl border-t-8 border-blue-950 animate-in fade-in zoom-in duration-500">
+             <div className="bg-red-500 w-24 h-24 rounded-full mx-auto mb-8 flex items-center justify-center shadow-xl animate-pulse">
+                <CloseIcon size={48} className="text-white" />
+             </div>
+             <h2 className="text-4xl font-black italic uppercase tracking-tighter mb-4 text-blue-950">LOJA FECHADA</h2>
+             <p className="text-blue-900/50 uppercase text-xs font-black tracking-widest leading-relaxed max-w-sm mx-auto">No momento não estamos aceitando novos pedidos. Tente mais tarde!</p>
+             <div className="mt-12 bg-yellow-400 p-6 rounded-[2.5rem] border-2 border-yellow-500 shadow-xl">
+                <p className="text-[10px] font-black uppercase text-blue-950/40 mb-2">Funcionamento</p>
+                <p className="font-black text-blue-950 uppercase tracking-tight italic">{STORE_INFO.hours}</p>
+             </div>
+          </div>
         )}
       </main>
       {!isStoreClosed && <div className="fixed bottom-8 left-0 right-0 flex justify-center px-6 z-40">

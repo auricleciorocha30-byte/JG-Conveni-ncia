@@ -1,7 +1,7 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Table, Order, Product, Category, Coupon, LoyaltyConfig, LoyaltyUser, OrderStatus, StoreConfig } from '../types';
-import { CloseIcon, TrashIcon, VolumeIcon, PrinterIcon, EditIcon, BackupIcon, RestoreIcon, GasIcon } from './Icons';
+// Fixed: Removed missing 'LoyaltyUser' import from '../types' as it is not exported there nor used here.
+import { Table, Order, Product, Category, Coupon, LoyaltyConfig, OrderStatus, StoreConfig, DailySpecial } from '../types';
+import { CloseIcon, TrashIcon, VolumeIcon, PrinterIcon, EditIcon, BackupIcon, RestoreIcon, GasIcon, StarIcon } from './Icons';
 import { supabase } from '../lib/supabase';
 import { STORE_INFO } from '../constants';
 
@@ -30,6 +30,8 @@ const STATUS_CFG: Record<string, any> = {
   'delivered': { label: 'Entregue', color: 'text-gray-400', bg: 'bg-gray-50', border: 'border-gray-200', badge: 'bg-gray-400 text-white' }
 };
 
+const DAYS_NAMES = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
 const AdminPanel: React.FC<AdminPanelProps> = ({ 
   tables = [], menuItems = [], categories = [], audioEnabled, onToggleAudio, onTestSound,
   onUpdateTable, onRefreshData, onLogout, onSaveProduct, onDeleteProduct, dbStatus, onAddToOrder,
@@ -49,6 +51,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   
   const [newOrderForm, setNewOrderForm] = useState({ customerName: '', type: 'delivery' as 'delivery' | 'takeaway', address: '' });
   const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [dailySpecials, setDailySpecials] = useState<DailySpecial[]>([]);
   const [loyalty, setLoyalty] = useState<LoyaltyConfig>({ isActive: false, spendingGoal: 100, scopeType: 'all', scopeValue: '' });
   const [isCouponModalOpen, setIsCouponModalOpen] = useState(false);
   const [editingCoupon, setEditingCoupon] = useState<Partial<Coupon> | null>(null);
@@ -56,7 +59,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { fetchMarketing(); }, []);
+  useEffect(() => { 
+    fetchMarketing();
+    fetchDailySpecials();
+  }, []);
 
   const fetchMarketing = async () => {
     try {
@@ -65,6 +71,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       const { data: lConfig } = await supabase.from('loyalty_config').select('*').maybeSingle();
       if (lConfig) setLoyalty({ isActive: lConfig.is_active ?? false, spendingGoal: lConfig.spending_goal ?? 100, scopeType: lConfig.scope_type || 'all', scopeValue: lConfig.scope_value || '' });
     } catch (e) { console.error("Error fetching marketing data", e); }
+  };
+
+  const fetchDailySpecials = async () => {
+    const { data } = await supabase.from('daily_specials').select('*').order('day_of_week');
+    if (data) setDailySpecials(data);
+  };
+
+  const handleUpdateDailySpecial = async (day: number, productId: string | null) => {
+    setIsDataProcessing(true);
+    try {
+      await supabase.from('daily_specials').upsert({ day_of_week: day, product_id: productId || null });
+      fetchDailySpecials();
+    } catch (e) { alert("Erro ao salvar oferta do dia."); } finally { setIsDataProcessing(false); }
   };
 
   const handleSaveCategory = async (e: React.FormEvent) => {
@@ -211,6 +230,64 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
         )}
 
+        {activeTab === 'marketing' && (
+          <div className="space-y-8">
+            <div className="bg-white p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400">
+               <div className="flex justify-between items-center mb-6">
+                 <h3 className="text-xl font-black italic uppercase text-blue-950">✨ Ofertas da Semana</h3>
+                 <p className="text-[9px] font-bold text-blue-900/30 uppercase">Selecione o produto para cada dia</p>
+               </div>
+               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+                 {[1, 2, 3, 4, 5, 6, 0].map(day => {
+                   const config = dailySpecials.find(s => s.day_of_week === day);
+                   return (
+                     <div key={day} className="flex flex-col gap-2 p-4 bg-yellow-50 rounded-3xl border-2 border-yellow-100">
+                       <p className="text-[10px] font-black uppercase text-blue-950 mb-1">{DAYS_NAMES[day]}</p>
+                       <select 
+                         value={config?.product_id || ''} 
+                         onChange={(e) => handleUpdateDailySpecial(day, e.target.value)}
+                         className="w-full bg-white border-2 border-yellow-200 rounded-xl p-2 text-[9px] font-black uppercase outline-none focus:border-blue-950"
+                       >
+                         <option value="">(Nenhum)</option>
+                         {menuItems.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                       </select>
+                     </div>
+                   );
+                 })}
+               </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 bg-white p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400 flex flex-col min-h-[500px]">
+                <div className="flex justify-between items-center mb-6"><h3 className="text-xl font-black italic uppercase text-blue-950">💎 Fidelidade</h3><button onClick={() => handleUpdateLoyalty({ isActive: !loyalty.isActive })} className={`px-4 py-2 rounded-xl font-black text-[9px] uppercase transition-all ${loyalty.isActive ? 'bg-green-600 text-white' : 'bg-yellow-400 text-blue-950'}`}>{loyalty.isActive ? 'Ativo' : 'Pausado'}</button></div>
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div><p className="text-[9px] font-black uppercase text-blue-900/30 mb-1">Meta R$</p><input type="number" value={loyalty.spendingGoal} onChange={e => handleUpdateLoyalty({ spendingGoal: Number(e.target.value) })} className="w-full bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 font-black outline-none focus:border-blue-950 text-blue-950" /></div>
+                  <div><p className="text-[9px] font-black uppercase text-blue-900/30 mb-1">Abrangência</p><select value={loyalty.scopeType} onChange={e => handleUpdateLoyalty({ scopeType: e.target.value as any, scopeValue: '' })} className="w-full bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 font-black outline-none focus:border-blue-950 text-xs uppercase text-blue-950"><option value="all">Loja Toda</option><option value="category">Categorias</option><option value="product">Produtos</option></select></div>
+                </div>
+                {loyalty.scopeType !== 'all' && (
+                  <div className="flex-1 bg-yellow-50 p-6 rounded-[2rem] border-2 border-dashed border-yellow-400 overflow-y-auto no-scrollbar max-h-80">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {loyalty.scopeType === 'category' ? categories.map(c => (
+                        <button key={c.id} onClick={() => toggleLoyaltyItem(c.name)} className={`p-3 rounded-xl border-2 font-black text-[9px] uppercase transition-all ${loyaltyScopeItems.includes(c.name) ? 'bg-blue-950 text-yellow-400 border-blue-950' : 'bg-white border-yellow-100 text-blue-900/30'}`}>{c.name}</button>
+                      )) : menuItems.map(p => (
+                        <button key={p.id} onClick={() => toggleLoyaltyItem(p.id)} className={`p-3 rounded-xl border-2 font-black text-[9px] uppercase transition-all ${loyaltyScopeItems.includes(p.id) ? 'bg-blue-950 text-yellow-400 border-blue-950' : 'bg-white border-yellow-100 text-blue-900/30 truncate'}`}>{p.name}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="lg:col-span-1 bg-blue-950 p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400 flex flex-col min-h-[500px]">
+                <div className="flex justify-between items-center mb-8"><h3 className="text-xl font-black italic uppercase text-yellow-400">🎫 Cupons</h3><button onClick={() => { setEditingCoupon(null); setCouponForm({ code: '', percentage: '', scopeType: 'all', selectedItems: [] }); setIsCouponModalOpen(true); }} className="bg-yellow-400 text-blue-950 px-4 py-2 rounded-xl font-black text-[9px] uppercase shadow-md">+ Adicionar</button></div>
+                <div className="space-y-4 overflow-y-auto no-scrollbar flex-1">
+                  {coupons.map(c => (
+                    <div key={c.id} className="p-4 bg-blue-900/40 rounded-2xl border border-yellow-400/20 flex justify-between items-center group text-white"><div className="flex flex-col"><span className="bg-yellow-400 text-blue-950 px-3 py-1 rounded-lg font-black text-[10px] w-fit mb-1 shadow-sm">{c.code}</span><span className="text-[9px] font-bold text-green-400 uppercase">{c.percentage}% DESCONTO</span></div><button onClick={async () => { await supabase.from('coupons').delete().eq('id', c.id); fetchMarketing(); }} className="text-red-500 hover:scale-110 transition-transform"><TrashIcon size={16}/></button></div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'delivery' && (
           <div className="space-y-8">
             <div className="bg-blue-950 p-6 rounded-[2.5rem] border-2 border-yellow-400 shadow-sm flex justify-between items-center">
@@ -271,37 +348,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'marketing' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 bg-white p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400 flex flex-col min-h-[500px]">
-              <div className="flex justify-between items-center mb-6"><h3 className="text-xl font-black italic uppercase text-blue-950">💎 Fidelidade</h3><button onClick={() => handleUpdateLoyalty({ isActive: !loyalty.isActive })} className={`px-4 py-2 rounded-xl font-black text-[9px] uppercase transition-all ${loyalty.isActive ? 'bg-green-600 text-white' : 'bg-yellow-400 text-blue-950'}`}>{loyalty.isActive ? 'Ativo' : 'Pausado'}</button></div>
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div><p className="text-[9px] font-black uppercase text-blue-900/30 mb-1">Meta R$</p><input type="number" value={loyalty.spendingGoal} onChange={e => handleUpdateLoyalty({ spendingGoal: Number(e.target.value) })} className="w-full bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 font-black outline-none focus:border-blue-950 text-blue-950" /></div>
-                <div><p className="text-[9px] font-black uppercase text-blue-900/30 mb-1">Abrangência</p><select value={loyalty.scopeType} onChange={e => handleUpdateLoyalty({ scopeType: e.target.value as any, scopeValue: '' })} className="w-full bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 font-black outline-none focus:border-blue-950 text-xs uppercase text-blue-950"><option value="all">Loja Toda</option><option value="category">Categorias</option><option value="product">Produtos</option></select></div>
-              </div>
-              {loyalty.scopeType !== 'all' && (
-                <div className="flex-1 bg-yellow-50 p-6 rounded-[2rem] border-2 border-dashed border-yellow-400 overflow-y-auto no-scrollbar max-h-80">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {loyalty.scopeType === 'category' ? categories.map(c => (
-                      <button key={c.id} onClick={() => toggleLoyaltyItem(c.name)} className={`p-3 rounded-xl border-2 font-black text-[9px] uppercase transition-all ${loyaltyScopeItems.includes(c.name) ? 'bg-blue-950 text-yellow-400 border-blue-950' : 'bg-white border-yellow-100 text-blue-900/30'}`}>{c.name}</button>
-                    )) : menuItems.map(p => (
-                      <button key={p.id} onClick={() => toggleLoyaltyItem(p.id)} className={`p-3 rounded-xl border-2 font-black text-[9px] uppercase transition-all ${loyaltyScopeItems.includes(p.id) ? 'bg-blue-950 text-yellow-400 border-blue-950' : 'bg-white border-yellow-100 text-blue-900/30 truncate'}`}>{p.name}</button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="lg:col-span-1 bg-blue-950 p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400 flex flex-col min-h-[500px]">
-              <div className="flex justify-between items-center mb-8"><h3 className="text-xl font-black italic uppercase text-yellow-400">🎫 Cupons</h3><button onClick={() => { setEditingCoupon(null); setCouponForm({ code: '', percentage: '', scopeType: 'all', selectedItems: [] }); setIsCouponModalOpen(true); }} className="bg-yellow-400 text-blue-950 px-4 py-2 rounded-xl font-black text-[9px] uppercase shadow-md">+ Adicionar</button></div>
-              <div className="space-y-4 overflow-y-auto no-scrollbar flex-1">
-                {coupons.map(c => (
-                  <div key={c.id} className="p-4 bg-blue-900/40 rounded-2xl border border-yellow-400/20 flex justify-between items-center group text-white"><div className="flex flex-col"><span className="bg-yellow-400 text-blue-950 px-3 py-1 rounded-lg font-black text-[10px] w-fit mb-1 shadow-sm">{c.code}</span><span className="text-[9px] font-bold text-green-400 uppercase">{c.percentage}% DESCONTO</span></div><button onClick={async () => { await supabase.from('coupons').delete().eq('id', c.id); fetchMarketing(); }} className="text-red-500 hover:scale-110 transition-transform"><TrashIcon size={16}/></button></div>
                 ))}
               </div>
             </div>
@@ -497,6 +543,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                
                <div className="p-6 space-y-4 flex flex-col flex-1 overflow-hidden">
                   <div className="relative">
+                    {/* Fixed: Use setProductSearchInTable setter instead of state value as function */}
                     <input type="text" value={productSearchInTable} onChange={e => setProductSearchInTable(e.target.value)} placeholder="PESQUISAR..." className="w-full bg-white border-2 border-blue-950 rounded-xl px-4 py-3 text-[10px] font-black outline-none shadow-sm focus:ring-4 focus:ring-blue-950/10 text-blue-950" />
                   </div>
                   
