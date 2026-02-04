@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-// Fixed: Removed missing 'LoyaltyUser' import from '../types' as it is not exported there nor used here.
 import { Table, Order, Product, Category, Coupon, LoyaltyConfig, OrderStatus, StoreConfig, DailySpecial } from '../types';
 import { CloseIcon, TrashIcon, VolumeIcon, PrinterIcon, EditIcon, BackupIcon, RestoreIcon, GasIcon, StarIcon } from './Icons';
 import { supabase } from '../lib/supabase';
@@ -58,6 +57,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [couponForm, setCouponForm] = useState({ code: '', percentage: '', scopeType: 'all' as 'all' | 'category' | 'product', selectedItems: [] as string[] });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const backupInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { 
     fetchMarketing();
@@ -149,7 +149,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleExportBackup = () => {
-    const backupData = { tables, menuItems, categories, coupons, loyalty, storeConfig, exportedAt: new Date().toISOString() };
+    const backupData = { 
+      menuItems, 
+      categories, 
+      coupons, 
+      loyalty, 
+      storeConfig, 
+      dailySpecials,
+      exportedAt: new Date().toISOString() 
+    };
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -159,6 +167,135 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!confirm("ATENÇÃO: Restaurar este backup irá sobrescrever seus produtos, categorias e configurações atuais. Deseja continuar?")) return;
+    
+    setIsDataProcessing(true);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      
+      if (data.categories?.length > 0) {
+        await supabase.from('categories').upsert(data.categories);
+      }
+      if (data.menuItems?.length > 0) {
+        const itemsToSave = data.menuItems.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          price: p.price,
+          category: p.category,
+          description: p.description,
+          image: p.image,
+          is_available: p.isAvailable ?? true
+        }));
+        await supabase.from('products').upsert(itemsToSave);
+      }
+      if (data.coupons?.length > 0) {
+        const couponsToSave = data.coupons.map((c: any) => ({
+          id: c.id,
+          code: c.code,
+          percentage: c.percentage,
+          is_active: c.isActive,
+          scope_type: c.scopeType,
+          scope_value: c.scopeValue
+        }));
+        await supabase.from('coupons').upsert(couponsToSave);
+      }
+      if (data.loyalty) {
+        await supabase.from('loyalty_config').upsert({
+          id: 1,
+          is_active: data.loyalty.isActive,
+          spending_goal: data.loyalty.spendingGoal,
+          scope_type: data.loyalty.scopeType,
+          scope_value: data.loyalty.scopeValue
+        });
+      }
+      if (data.storeConfig) {
+        await supabase.from('store_config').upsert({
+          id: 1,
+          tables_enabled: data.storeConfig.tablesEnabled,
+          delivery_enabled: data.storeConfig.deliveryEnabled,
+          counter_enabled: data.storeConfig.counterEnabled,
+          status_panel_enabled: data.storeConfig.statusPanelEnabled
+        });
+      }
+      if (data.dailySpecials?.length > 0) {
+        await supabase.from('daily_specials').upsert(data.dailySpecials);
+      }
+
+      alert("Dados restaurados com sucesso!");
+      onRefreshData();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao ler o arquivo de backup. Verifique se o formato está correto.");
+    } finally {
+      setIsDataProcessing(false);
+      if (backupInputRef.current) backupInputRef.current.value = '';
+    }
+  };
+
+  const handlePrintOrder = (order: Order) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    
+    const itemsHtml = (order.items || []).map(item => `
+      <tr>
+        <td style="padding: 5px 0; font-size: 14px;">${item.quantity}x ${item.name}</td>
+        <td style="text-align: right; font-size: 14px;">R$ ${(item.price * item.quantity).toFixed(2)}</td>
+      </tr>
+      ${item.observation ? `<tr><td colspan="2" style="font-size: 11px; color: #444; padding-bottom: 5px; border-bottom: 1px solid #eee;">Obs: ${item.observation}</td></tr>` : ''}
+    `).join('');
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Pedido #${order.id}</title>
+          <style>
+            body { font-family: 'Courier New', Courier, monospace; width: 72mm; padding: 0; margin: 0; }
+            .container { padding: 10px; }
+            h2 { text-align: center; margin: 5px 0; text-transform: uppercase; font-size: 18px; }
+            p { margin: 3px 0; font-size: 13px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            .total-box { border-top: 2px dashed #000; margin-top: 10px; padding-top: 8px; }
+            .total-row { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 3px; }
+            .final { font-size: 20px; border-top: 1px solid #000; margin-top: 5px; padding-top: 5px; }
+            .footer { text-align: center; margin-top: 25px; font-size: 11px; border-top: 1px solid #000; padding-top: 10px; }
+            @media print { .no-print { display: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h2>${STORE_INFO.name}</h2>
+            <div style="text-align: center; font-size: 10px; margin-bottom: 10px;">${STORE_INFO.hours}</div>
+            <p><strong>PEDIDO: #${order.id}</strong></p>
+            <p>DATA: ${new Date(order.timestamp).toLocaleString('pt-BR')}</p>
+            <p>CLIENTE: ${order.customerName}</p>
+            <p>TIPO: ${order.orderType === 'table' ? 'MESA ' + order.tableId : order.orderType === 'delivery' ? 'ENTREGA' : 'BALCÃO'}</p>
+            ${order.address ? `<p>END: ${order.address}</p>` : ''}
+            <div style="border-bottom: 2px solid #000; margin: 10px 0;"></div>
+            <table>
+              ${itemsHtml}
+            </table>
+            <div class="total-box">
+              <div class="total-row"><span>SUBTOTAL:</span><span>R$ ${(order.total || 0).toFixed(2)}</span></div>
+              ${order.discount ? `<div class="total-row"><span>DESCONTO:</span><span>- R$ ${order.discount.toFixed(2)}</span></div>` : ''}
+              <div class="total-row final"><span>TOTAL:</span><span>R$ ${(order.finalTotal || 0).toFixed(2)}</span></div>
+            </div>
+            <p style="margin-top: 10px;"><strong>PAGAMENTO: ${order.paymentMethod}</strong></p>
+            <div class="footer">
+              <p>Obrigado pela preferência!</p>
+              <p>Gerado em: ${new Date().toLocaleString('pt-BR')}</p>
+            </div>
+          </div>
+          <script>window.print(); setTimeout(() => window.close(), 1000);</script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const physicalTables = tables.filter(t => t.id <= 12).sort((a,b) => a.id - b.id);
@@ -224,7 +361,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               <h3 className="text-xl font-black italic uppercase mb-8 tracking-tighter text-yellow-400">Dados e Links</h3>
               <div className="space-y-4">
                  <button onClick={() => window.open(window.location.origin + window.location.pathname + '?view=tv', '_blank')} className="w-full p-6 bg-yellow-400 text-blue-950 rounded-[2rem] flex items-center justify-between hover:scale-[1.02] transition-all shadow-xl"><p className="font-black text-xs uppercase">🖥️ Abrir Painel TV</p></button>
-                 <button onClick={handleExportBackup} className="w-full p-6 bg-blue-900/40 text-yellow-400 border-2 border-dashed border-yellow-400/30 rounded-[2rem] flex items-center justify-between hover:bg-blue-900/60 transition-all"><p className="font-black text-xs uppercase">Gerar Backup Local</p><BackupIcon size={20} /></button>
+                 
+                 <div className="grid grid-cols-2 gap-3">
+                   <button onClick={handleExportBackup} className="p-6 bg-blue-900/40 text-yellow-400 border-2 border-dashed border-yellow-400/30 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:bg-blue-900/60 transition-all">
+                      <BackupIcon size={24} />
+                      <p className="font-black text-[9px] uppercase">Exportar Backup</p>
+                   </button>
+                   <button onClick={() => backupInputRef.current?.click()} className="p-6 bg-blue-900/40 text-green-400 border-2 border-dashed border-green-400/30 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:bg-blue-900/60 transition-all">
+                      <RestoreIcon size={24} />
+                      <p className="font-black text-[9px] uppercase">Restaurar Backup</p>
+                   </button>
+                   <input type="file" ref={backupInputRef} onChange={handleImportBackup} accept=".json" className="hidden" />
+                 </div>
               </div>
             </div>
           </div>
@@ -232,28 +380,57 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
         {activeTab === 'marketing' && (
           <div className="space-y-8">
+            {/* Ofertas da Semana */}
             <div className="bg-white p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400">
-               <div className="flex justify-between items-center mb-6">
-                 <h3 className="text-xl font-black italic uppercase text-blue-950">✨ Ofertas da Semana</h3>
-                 <p className="text-[9px] font-bold text-blue-900/30 uppercase">Selecione o produto para cada dia</p>
+               <div className="flex justify-between items-center mb-8">
+                 <div>
+                    <h3 className="text-2xl font-black italic uppercase text-blue-950">🌟 Ofertas da Semana</h3>
+                    <p className="text-[10px] font-bold text-blue-900/40 uppercase tracking-widest mt-1">Configure o item especial para cada dia</p>
+                 </div>
+                 <div className="bg-blue-950 p-3 rounded-2xl rotate-3">
+                    <StarIcon size={24} className="text-yellow-400" />
+                 </div>
                </div>
+               
                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
                  {[1, 2, 3, 4, 5, 6, 0].map(day => {
                    const config = dailySpecials.find(s => s.day_of_week === day);
+                   const product = menuItems.find(p => p.id === config?.product_id);
+                   const isToday = new Date().getDay() === day;
+                   
                    return (
-                     <div key={day} className="flex flex-col gap-2 p-4 bg-yellow-50 rounded-3xl border-2 border-yellow-100">
-                       <p className="text-[10px] font-black uppercase text-blue-950 mb-1">{DAYS_NAMES[day]}</p>
+                     <div key={day} className={`flex flex-col gap-3 p-5 rounded-[2rem] border-2 transition-all shadow-sm ${isToday ? 'bg-yellow-400 border-blue-950 scale-105 z-10' : 'bg-yellow-50 border-yellow-100'}`}>
+                       <div className="flex justify-between items-center">
+                          <p className={`text-[10px] font-black uppercase ${isToday ? 'text-blue-950' : 'text-blue-950/60'}`}>{DAYS_NAMES[day]}</p>
+                          {isToday && <span className="bg-blue-950 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase">Hoje</span>}
+                       </div>
+                       
                        <select 
                          value={config?.product_id || ''} 
                          onChange={(e) => handleUpdateDailySpecial(day, e.target.value)}
-                         className="w-full bg-white border-2 border-yellow-200 rounded-xl p-2 text-[9px] font-black uppercase outline-none focus:border-blue-950"
+                         className={`w-full border-2 rounded-xl p-2.5 text-[9px] font-black uppercase outline-none focus:border-blue-950 shadow-sm transition-all ${isToday ? 'bg-white border-blue-950' : 'bg-white border-yellow-200'}`}
                        >
-                         <option value="">(Nenhum)</option>
+                         <option value="">(Nenhuma Oferta)</option>
                          {menuItems.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                        </select>
+                       
+                       {product && (
+                         <div className="flex items-center gap-2 bg-white/40 p-2 rounded-xl">
+                            <img src={product.image} className="w-8 h-8 rounded-lg object-cover shadow-sm" />
+                            <div className="min-w-0">
+                               <p className="text-[8px] font-black uppercase truncate text-blue-950">{product.name}</p>
+                               <p className="text-[9px] font-black text-blue-950 italic leading-none">R$ {product.price.toFixed(2)}</p>
+                            </div>
+                         </div>
+                       )}
                      </div>
                    );
                  })}
+               </div>
+               
+               <div className="mt-8 p-4 bg-blue-950 rounded-2xl flex items-center gap-4 border-l-8 border-yellow-400 shadow-xl">
+                  <div className="bg-yellow-400 p-2 rounded-lg"><StarIcon size={16} className="text-blue-950" /></div>
+                  <p className="text-[9px] font-black text-white uppercase tracking-wider">Os dias sem produtos selecionados ficarão ocultos no cronograma público do cardápio.</p>
                </div>
             </div>
 
@@ -498,7 +675,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <h3 className="text-2xl font-black uppercase italic tracking-tighter text-blue-950">{selectedTable.id >= 950 ? 'Balcão' : selectedTable.id >= 900 ? 'Entrega' : `Mesa ${selectedTable.id}`}</h3>
                     <p className="text-[10px] font-black text-blue-900/40 uppercase mt-1">ID: #{selectedTable.currentOrder?.id} • {STATUS_CFG[selectedTable.currentOrder?.status || 'pending'].label}</p>
                   </div>
-                  <button onClick={() => setSelectedTableId(null)} className="md:hidden p-4 bg-yellow-400 text-blue-950 rounded-full transition-colors"><CloseIcon size={20}/></button>
+                  <div className="flex gap-2">
+                    <button onClick={() => selectedTable.currentOrder && handlePrintOrder(selectedTable.currentOrder)} className="p-4 bg-blue-950 text-yellow-400 rounded-full hover:bg-blue-800 transition-colors shadow-lg">
+                      <PrinterIcon size={20}/>
+                    </button>
+                    <button onClick={() => setSelectedTableId(null)} className="p-4 bg-yellow-400 text-blue-950 rounded-full transition-colors"><CloseIcon size={20}/></button>
+                  </div>
                </div>
                
                <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -543,7 +725,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                
                <div className="p-6 space-y-4 flex flex-col flex-1 overflow-hidden">
                   <div className="relative">
-                    {/* Fixed: Use setProductSearchInTable setter instead of state value as function */}
                     <input type="text" value={productSearchInTable} onChange={e => setProductSearchInTable(e.target.value)} placeholder="PESQUISAR..." className="w-full bg-white border-2 border-blue-950 rounded-xl px-4 py-3 text-[10px] font-black outline-none shadow-sm focus:ring-4 focus:ring-blue-950/10 text-blue-950" />
                   </div>
                   
