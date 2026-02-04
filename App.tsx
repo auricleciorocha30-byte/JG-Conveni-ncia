@@ -9,6 +9,8 @@ import { Product, CartItem, Table, Order, Category, Coupon, StoreConfig, DailySp
 import { supabase } from './lib/supabase';
 import { CloseIcon, GasIcon, StarIcon } from './components/Icons';
 
+const DAYS_NAMES = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
 const App: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -43,38 +45,6 @@ const App: React.FC = () => {
   const notificationSound = useRef<HTMLAudioElement | null>(null);
   const lastNotifiedOrderId = useRef<string | null>(null);
   const lastNotifiedStatus = useRef<string | null>(null);
-
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('view') === 'tv') setCurrentView('tv');
-      else if (params.get('view') === 'menu') setCurrentView('menu');
-
-      notificationSound.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-      notificationSound.current.load();
-    } catch (e) {
-      console.error("Audio init error", e);
-    }
-  }, []);
-
-  const handleUnlockAudio = useCallback(() => {
-    if (!audioUnlocked && notificationSound.current) {
-      notificationSound.current.play()
-        .then(() => {
-          notificationSound.current?.pause();
-          if (notificationSound.current) notificationSound.current.currentTime = 0;
-          setAudioUnlocked(true);
-        })
-        .catch(err => console.warn("Aguardando interação...", err));
-    }
-  }, [audioUnlocked]);
-
-  const testSound = () => {
-    if (notificationSound.current) {
-      notificationSound.current.currentTime = 0;
-      notificationSound.current.play().catch(e => alert("Clique na tela primeiro para autorizar o som!"));
-    }
-  };
 
   const fetchData = useCallback(async (isSilent = false) => {
     try {
@@ -126,21 +96,45 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Lógica de Inicialização Única
   useEffect(() => {
-    const checkInitialSession = async () => {
+    const initialize = async () => {
+      // 1. Identificar visão desejada pela URL
+      const params = new URLSearchParams(window.location.search);
+      const urlView = params.get('view');
+      let targetInitialView: 'login' | 'admin' | 'menu' | 'tv' = 'login';
+      
+      if (urlView === 'tv') targetInitialView = 'tv';
+      else if (urlView === 'menu') targetInitialView = 'menu';
+      
+      setCurrentView(targetInitialView);
+
+      // 2. Verificar Sessão
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) { 
           setIsLoggedIn(true); 
           setIsAdmin(true);
-          if (currentView === 'login') setCurrentView('admin');
+          // Só muda para admin se a intenção original for 'login'
+          if (targetInitialView === 'login') {
+            setCurrentView('admin');
+          }
         }
       } catch (e) {
         console.error("Session check error", e);
       }
+
+      // 3. Carregar dados
       fetchData();
+
+      // 4. Iniciar Som
+      try {
+        notificationSound.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+        notificationSound.current.load();
+      } catch (e) {}
     };
-    checkInitialSession();
+
+    initialize();
   }, [fetchData]);
 
   useEffect(() => {
@@ -173,12 +167,12 @@ const App: React.FC = () => {
               notificationSound.current.currentTime = 0;
               notificationSound.current.play().catch(() => {});
             }
-            if (isAdmin) {
+            if (isAdmin && currentView === 'admin') {
               setActiveAlert({ id: newRec.id, type: tableType, msg: 'Novo Pedido!', timestamp: Date.now() });
               setTimeout(() => setActiveAlert(null), 10000);
             }
           } 
-          else if (isAdmin && status !== lastNotifiedStatus.current) {
+          else if (isAdmin && currentView === 'admin' && status !== lastNotifiedStatus.current) {
             lastNotifiedStatus.current = status;
             const statusLabels: any = { pending: 'Pendente', preparing: 'Em Preparo', ready: 'Pronto p/ Entrega', delivered: 'Entregue' };
             setActiveAlert({ id: newRec.id, type: tableType, msg: `Status: ${statusLabels[status] || status}`, isUpdate: true, timestamp: Date.now() });
@@ -237,8 +231,41 @@ const App: React.FC = () => {
     return menuItems.find(p => p.id === config.product_id && p.isAvailable) || null;
   }, [dailySpecials, menuItems]);
 
+  const weeklySchedule = useMemo(() => {
+    return dailySpecials
+      .filter(s => s.product_id !== null)
+      .map(s => {
+        const product = menuItems.find(p => p.id === s.product_id);
+        return { day: s.day_of_week, product };
+      })
+      .filter(item => item.product !== undefined)
+      .sort((a, b) => {
+        const order = [1, 2, 3, 4, 5, 6, 0];
+        return order.indexOf(a.day) - order.indexOf(b.day);
+      });
+  }, [dailySpecials, menuItems]);
+
   const activeStatusOrders = useMemo(() => tables.filter(t => t.status === 'occupied' && t.currentOrder && t.currentOrder.status !== 'delivered' && (t.id <= 12 || t.id >= 950)).map(t => t.currentOrder!).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()), [tables]);
   const statusLabel = (s: string) => ({ pending: 'Pendente', preparing: 'Preparando', ready: 'PRONTO! 🚀' }[s] || s);
+
+  const handleUnlockAudio = useCallback(() => {
+    if (!audioUnlocked && notificationSound.current) {
+      notificationSound.current.play()
+        .then(() => {
+          notificationSound.current?.pause();
+          if (notificationSound.current) notificationSound.current.currentTime = 0;
+          setAudioUnlocked(true);
+        })
+        .catch(err => console.warn("Aguardando interação...", err));
+    }
+  }, [audioUnlocked]);
+
+  const testSound = () => {
+    if (notificationSound.current) {
+      notificationSound.current.currentTime = 0;
+      notificationSound.current.play().catch(e => alert("Clique na tela primeiro para autorizar o som!"));
+    }
+  };
 
   if (currentView === 'login') {
     return (
@@ -389,6 +416,28 @@ const App: React.FC = () => {
                </div>
             )}
 
+            {weeklySchedule.length > 0 && (
+              <div className="mb-12 bg-blue-950 rounded-[3rem] p-8 shadow-2xl border-b-8 border-yellow-400">
+                 <div className="flex items-center gap-4 mb-8">
+                    <div className="bg-yellow-400 p-2 rounded-xl rotate-6"><StarIcon size={20} className="text-blue-950" /></div>
+                    <h3 className="text-xl font-black italic uppercase text-yellow-400 tracking-tighter">Cronograma de Ofertas</h3>
+                 </div>
+                 <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2">
+                   {weeklySchedule.map(item => {
+                     const isToday = new Date().getDay() === item.day;
+                     return (
+                       <div key={item.day} className={`shrink-0 w-44 p-5 rounded-3xl border-2 transition-all ${isToday ? 'bg-yellow-400 border-white scale-105 shadow-xl' : 'bg-blue-900/40 border-blue-800'}`}>
+                          <p className={`text-[10px] font-black uppercase mb-3 ${isToday ? 'text-blue-950' : 'text-yellow-400/60'}`}>{DAYS_NAMES[item.day]}</p>
+                          <img src={item.product?.image} className="w-full aspect-video rounded-xl object-cover mb-3 shadow-md" />
+                          <p className={`font-black text-[10px] uppercase truncate ${isToday ? 'text-blue-950' : 'text-white'}`}>{item.product?.name}</p>
+                          <p className={`text-[11px] font-black italic mt-1 ${isToday ? 'text-blue-950/70' : 'text-yellow-400'}`}>R$ {item.product?.price.toFixed(2)}</p>
+                       </div>
+                     );
+                   })}
+                 </div>
+              </div>
+            )}
+
             {storeConfig.statusPanelEnabled && activeStatusOrders.length > 0 && showCustomerStatusPanel && (
               <div className="bg-blue-950 text-white p-6 rounded-[2.5rem] mb-10 shadow-2xl border-4 border-yellow-400 overflow-hidden relative">
                 <button onClick={() => setShowCustomerStatusPanel(false)} className="absolute top-4 right-4 z-10 p-2 bg-white/10 rounded-full"><CloseIcon size={16} className="text-yellow-400" /></button>
@@ -403,6 +452,7 @@ const App: React.FC = () => {
                 </div>
               </div>
             )}
+
             <div className="flex overflow-x-auto gap-2.5 pb-8 no-scrollbar mask-fade pt-4">
               {categoryNames.map(cat => (<button key={cat} onClick={() => setSelectedCategory(cat)} className={`whitespace-nowrap px-6 py-3.5 rounded-2xl font-black text-[10px] uppercase shadow-md transition-all ${selectedCategory === cat ? 'bg-blue-950 text-yellow-400' : 'bg-white text-blue-950 border border-yellow-200 hover:border-blue-950'}`}>{cat}</button>))}
             </div>
