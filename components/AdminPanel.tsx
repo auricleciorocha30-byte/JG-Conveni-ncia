@@ -1,5 +1,6 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Table, Order, Product, Category, Coupon, LoyaltyConfig, OrderStatus, StoreConfig, DailySpecial } from '../types';
+import { Table, Order, Product, Category, Coupon, LoyaltyConfig, OrderStatus, StoreConfig, DailySpecial, LoyaltyUser } from '../types';
 import { CloseIcon, TrashIcon, VolumeIcon, PrinterIcon, EditIcon, BackupIcon, RestoreIcon, GasIcon, StarIcon } from './Icons';
 import { supabase } from '../lib/supabase';
 import { STORE_INFO } from '../constants';
@@ -52,6 +53,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [dailySpecials, setDailySpecials] = useState<DailySpecial[]>([]);
   const [loyalty, setLoyalty] = useState<LoyaltyConfig>({ isActive: false, spendingGoal: 100, scopeType: 'all', scopeValue: '' });
+  const [loyaltyUsers, setLoyaltyUsers] = useState<LoyaltyUser[]>([]);
   const [isCouponModalOpen, setIsCouponModalOpen] = useState(false);
   const [editingCoupon, setEditingCoupon] = useState<Partial<Coupon> | null>(null);
   const [couponForm, setCouponForm] = useState({ code: '', percentage: '', scopeType: 'all' as 'all' | 'category' | 'product', selectedItems: [] as string[] });
@@ -68,8 +70,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     try {
       const { data: cData } = await supabase.from('coupons').select('*').order('code', { ascending: true });
       if (cData) setCoupons(cData.map(c => ({ id: c.id, code: c.code, percentage: c.percentage, isActive: c.is_active, scopeType: c.scope_type, scopeValue: c.scope_value || '' })));
+      
       const { data: lConfig } = await supabase.from('loyalty_config').select('*').maybeSingle();
       if (lConfig) setLoyalty({ isActive: lConfig.is_active ?? false, spendingGoal: lConfig.spending_goal ?? 100, scopeType: lConfig.scope_type || 'all', scopeValue: lConfig.scope_value || '' });
+      
+      const { data: lUsers } = await supabase.from('loyalty_users').select('*').order('accumulated', { ascending: false });
+      if (lUsers) setLoyaltyUsers(lUsers);
     } catch (e) { console.error("Error fetching marketing data", e); }
   };
 
@@ -118,6 +124,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     const next = { ...loyalty, ...updates };
     setLoyalty(next);
     await supabase.from('loyalty_config').upsert({ id: 1, is_active: next.isActive, spending_goal: next.spendingGoal, scope_type: next.scopeType, scope_value: next.scopeValue }, { onConflict: 'id' });
+  };
+
+  const handleDeleteLoyaltyUser = async (phone: string) => {
+    if (!confirm('Deseja remover este cliente do programa de fidelidade?')) return;
+    try {
+      await supabase.from('loyalty_users').delete().eq('phone', phone);
+      fetchMarketing();
+    } catch (e) { alert('Erro ao remover cliente.'); }
   };
 
   const toggleLoyaltyItem = (val: string) => {
@@ -435,29 +449,88 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 bg-white p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400 flex flex-col min-h-[500px]">
-                <div className="flex justify-between items-center mb-6"><h3 className="text-xl font-black italic uppercase text-blue-950">💎 Fidelidade</h3><button onClick={() => handleUpdateLoyalty({ isActive: !loyalty.isActive })} className={`px-4 py-2 rounded-xl font-black text-[9px] uppercase transition-all ${loyalty.isActive ? 'bg-green-600 text-white' : 'bg-yellow-400 text-blue-950'}`}>{loyalty.isActive ? 'Ativo' : 'Pausado'}</button></div>
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div><p className="text-[9px] font-black uppercase text-blue-900/30 mb-1">Meta R$</p><input type="number" value={loyalty.spendingGoal} onChange={e => handleUpdateLoyalty({ spendingGoal: Number(e.target.value) })} className="w-full bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 font-black outline-none focus:border-blue-950 text-blue-950" /></div>
-                  <div><p className="text-[9px] font-black uppercase text-blue-900/30 mb-1">Abrangência</p><select value={loyalty.scopeType} onChange={e => handleUpdateLoyalty({ scopeType: e.target.value as any, scopeValue: '' })} className="w-full bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 font-black outline-none focus:border-blue-950 text-xs uppercase text-blue-950"><option value="all">Loja Toda</option><option value="category">Categorias</option><option value="product">Produtos</option></select></div>
-                </div>
-                {loyalty.scopeType !== 'all' && (
-                  <div className="flex-1 bg-yellow-50 p-6 rounded-[2rem] border-2 border-dashed border-yellow-400 overflow-y-auto no-scrollbar max-h-80">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {loyalty.scopeType === 'category' ? categories.map(c => (
-                        <button key={c.id} onClick={() => toggleLoyaltyItem(c.name)} className={`p-3 rounded-xl border-2 font-black text-[9px] uppercase transition-all ${loyaltyScopeItems.includes(c.name) ? 'bg-blue-950 text-yellow-400 border-blue-950' : 'bg-white border-yellow-100 text-blue-900/30'}`}>{c.name}</button>
-                      )) : menuItems.map(p => (
-                        <button key={p.id} onClick={() => toggleLoyaltyItem(p.id)} className={`p-3 rounded-xl border-2 font-black text-[9px] uppercase transition-all ${loyaltyScopeItems.includes(p.id) ? 'bg-blue-950 text-yellow-400 border-blue-950' : 'bg-white border-yellow-100 text-blue-900/30 truncate'}`}>{p.name}</button>
-                      ))}
-                    </div>
+              {/* Fidelidade - Configuração e Participantes */}
+              <div className="lg:col-span-2 space-y-8">
+                <div className="bg-white p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400 flex flex-col">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-black italic uppercase text-blue-950">💎 Config. Fidelidade</h3>
+                    <button onClick={() => handleUpdateLoyalty({ isActive: !loyalty.isActive })} className={`px-4 py-2 rounded-xl font-black text-[9px] uppercase transition-all ${loyalty.isActive ? 'bg-green-600 text-white' : 'bg-yellow-400 text-blue-950'}`}>{loyalty.isActive ? 'Ativo' : 'Pausado'}</button>
                   </div>
-                )}
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div><p className="text-[9px] font-black uppercase text-blue-900/30 mb-1">Meta R$</p><input type="number" value={loyalty.spendingGoal} onChange={e => handleUpdateLoyalty({ spendingGoal: Number(e.target.value) })} className="w-full bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 font-black outline-none focus:border-blue-950 text-blue-950" /></div>
+                    <div><p className="text-[9px] font-black uppercase text-blue-900/30 mb-1">Abrangência</p><select value={loyalty.scopeType} onChange={e => handleUpdateLoyalty({ scopeType: e.target.value as any, scopeValue: '' })} className="w-full bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 font-black outline-none focus:border-blue-950 text-xs uppercase text-blue-950"><option value="all">Loja Toda</option><option value="category">Categorias</option><option value="product">Produtos</option></select></div>
+                  </div>
+                  {loyalty.scopeType !== 'all' && (
+                    <div className="bg-yellow-50 p-6 rounded-[2rem] border-2 border-dashed border-yellow-400 overflow-y-auto no-scrollbar max-h-48 mb-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {loyalty.scopeType === 'category' ? categories.map(c => (
+                          <button key={c.id} onClick={() => toggleLoyaltyItem(c.name)} className={`p-3 rounded-xl border-2 font-black text-[9px] uppercase transition-all ${loyaltyScopeItems.includes(c.name) ? 'bg-blue-950 text-yellow-400 border-blue-950' : 'bg-white border-yellow-100 text-blue-900/30'}`}>{c.name}</button>
+                        )) : menuItems.map(p => (
+                          <button key={p.id} onClick={() => toggleLoyaltyItem(p.id)} className={`p-3 rounded-xl border-2 font-black text-[9px] uppercase transition-all ${loyaltyScopeItems.includes(p.id) ? 'bg-blue-950 text-yellow-400 border-blue-950' : 'bg-white border-yellow-100 text-blue-900/30 truncate'}`}>{p.name}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Lista de Participantes Fidelidade */}
+                <div className="bg-white p-8 rounded-[3rem] shadow-xl border-4 border-blue-950 flex flex-col">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-black italic uppercase text-blue-950">👥 Participantes Fidelidade</h3>
+                    <span className="bg-blue-950 text-yellow-400 px-3 py-1 rounded-lg font-black text-[10px]">{loyaltyUsers.length} Clientes</span>
+                  </div>
+                  <div className="overflow-x-auto no-scrollbar">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b-2 border-blue-950/10">
+                          <th className="py-3 text-[9px] font-black uppercase text-blue-900/30">Nome</th>
+                          <th className="py-3 text-[9px] font-black uppercase text-blue-900/30">Celular</th>
+                          <th className="py-3 text-[9px] font-black uppercase text-blue-900/30">Acumulado</th>
+                          <th className="py-3 text-right"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-blue-950/5">
+                        {loyaltyUsers.map(u => (
+                          <tr key={u.phone} className="group hover:bg-yellow-50 transition-colors">
+                            <td className="py-4 font-black text-[10px] text-blue-950 uppercase">{u.name}</td>
+                            <td className="py-4 font-bold text-[10px] text-blue-950/60">{u.phone}</td>
+                            <td className="py-4">
+                              <span className="font-black text-xs text-blue-950 italic">R$ {u.accumulated.toFixed(2)}</span>
+                              {u.accumulated >= loyalty.spendingGoal && (
+                                <span className="ml-2 bg-green-100 text-green-700 text-[8px] font-black px-2 py-0.5 rounded-full uppercase">Meta Atingida!</span>
+                              )}
+                            </td>
+                            <td className="py-4 text-right">
+                              <button onClick={() => handleDeleteLoyaltyUser(u.phone)} className="text-red-500 opacity-0 group-hover:opacity-100 transition-all">
+                                <TrashIcon size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {loyaltyUsers.length === 0 && (
+                          <tr><td colSpan={4} className="py-10 text-center text-blue-900/20 font-black uppercase text-[10px] italic">Nenhum cliente cadastrado ainda</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-              <div className="lg:col-span-1 bg-blue-950 p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400 flex flex-col min-h-[500px]">
-                <div className="flex justify-between items-center mb-8"><h3 className="text-xl font-black italic uppercase text-yellow-400">🎫 Cupons</h3><button onClick={() => { setEditingCoupon(null); setCouponForm({ code: '', percentage: '', scopeType: 'all', selectedItems: [] }); setIsCouponModalOpen(true); }} className="bg-yellow-400 text-blue-950 px-4 py-2 rounded-xl font-black text-[9px] uppercase shadow-md">+ Adicionar</button></div>
+              
+              {/* Cupons */}
+              <div className="lg:col-span-1 bg-blue-950 p-8 rounded-[3rem] shadow-xl border-4 border-yellow-400 flex flex-col h-full min-h-[600px]">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-xl font-black italic uppercase text-yellow-400">🎫 Cupons</h3>
+                  <button onClick={() => { setEditingCoupon(null); setCouponForm({ code: '', percentage: '', scopeType: 'all', selectedItems: [] }); setIsCouponModalOpen(true); }} className="bg-yellow-400 text-blue-950 px-4 py-2 rounded-xl font-black text-[9px] uppercase shadow-md">+ Adicionar</button>
+                </div>
                 <div className="space-y-4 overflow-y-auto no-scrollbar flex-1">
                   {coupons.map(c => (
-                    <div key={c.id} className="p-4 bg-blue-900/40 rounded-2xl border border-yellow-400/20 flex justify-between items-center group text-white"><div className="flex flex-col"><span className="bg-yellow-400 text-blue-950 px-3 py-1 rounded-lg font-black text-[10px] w-fit mb-1 shadow-sm">{c.code}</span><span className="text-[9px] font-bold text-green-400 uppercase">{c.percentage}% DESCONTO</span></div><button onClick={async () => { await supabase.from('coupons').delete().eq('id', c.id); fetchMarketing(); }} className="text-red-500 hover:scale-110 transition-transform"><TrashIcon size={16}/></button></div>
+                    <div key={c.id} className="p-4 bg-blue-900/40 rounded-2xl border border-yellow-400/20 flex justify-between items-center group text-white">
+                      <div className="flex flex-col">
+                        <span className="bg-yellow-400 text-blue-950 px-3 py-1 rounded-lg font-black text-[10px] w-fit mb-1 shadow-sm">{c.code}</span>
+                        <span className="text-[9px] font-bold text-green-400 uppercase">{c.percentage}% DESCONTO</span>
+                      </div>
+                      <button onClick={async () => { if(confirm('Excluir cupom?')) { await supabase.from('coupons').delete().eq('id', c.id); fetchMarketing(); } }} className="text-red-500 hover:scale-110 transition-transform"><TrashIcon size={16}/></button>
+                    </div>
                   ))}
                 </div>
               </div>

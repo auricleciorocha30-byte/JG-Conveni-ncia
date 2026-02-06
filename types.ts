@@ -72,6 +72,12 @@ export interface LoyaltyConfig {
   scopeValue: string;
 }
 
+export interface LoyaltyUser {
+  phone: string;
+  name: string;
+  accumulated: number;
+}
+
 export interface DailySpecial {
   day_of_week: number;
   product_id: string | null;
