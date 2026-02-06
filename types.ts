@@ -88,4 +88,6 @@ export interface StoreConfig {
   deliveryEnabled: boolean;
   counterEnabled: boolean;
   statusPanelEnabled: boolean;
+  waiterCanFinalize?: boolean;
+  waiterCanCancelItems?: boolean;
 }
